@@ -10,20 +10,35 @@ export default async function handler(req, res) {
   const consumerSecret = process.env.WC_CONSUMER_SECRET;
 
   try {
-    const response = await fetch(`${baseURL}?search=${search}&consumer_key=${consumerKey}&consumer_secret=${consumerSecret}`);
+    // Add more query parameters if needed: per_page, category, sku, etc.
+    const url = `${baseURL}?search=${encodeURIComponent(search)}&consumer_key=${consumerKey}&consumer_secret=${consumerSecret}&per_page=20`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`WooCommerce API responded with status ${response.status}`);
+    }
     const data = await response.json();
 
     const formatted = data.map(item => ({
       id: item.id,
+      sku: item.sku,
       name: item.name,
       image: item.images[0]?.src || null,
       description: item.short_description,
-      permalink: item.permalink
+      price: item.price,             // price
+      regular_price: item.regular_price,
+      sale_price: item.sale_price,
+      permalink: item.permalink,
+      tags: (item.tags || []).map(t => t.name),         // tags array
+      categories: (item.categories || []).map(c => c.name), // categories array
+      attributes: (item.attributes || []).map(attr => ({
+        name: attr.name,
+        options: attr.options
+      }))
     }));
 
     res.status(200).json(formatted);
   } catch (error) {
-    console.error(error);
+    console.error('Error fetching products from WooCommerce:', error);
     res.status(500).json({ error: 'WooCommerce API request failed' });
   }
 }
