@@ -1,0 +1,47 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Éclat Lookbook API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/generate-lookbook": {
+      "post": {
+        "operationId": "generateLookbook",
+        "summary": "Generate a lookbook image from SKUs and concept",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "concept": { "type": "string" },
+                  "skus": { "type": "array", "items": { "type": "string" } },
+                  "palette": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["concept", "skus"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "preview_image": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
