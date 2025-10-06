@@ -3,68 +3,75 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { concept = "", skus = [], palette = [] } = req.body || {};
+  const { concept = "", skus = [], palette = [], count = 1 } = req.body || {};
+  const API_KEY =
+    process.env.GOOGLE_GEMINI_IMAGE_API_KEY ||
+    process.env.GEMINI_IMAGE_API_KEY ||
+    process.env.GEMINI_API_KEY ||
+    process.env.GOOGLE_GEMINI_API_KEY;
 
-  // Ensure an API key is present (works with either var name)
-  const API_KEY = process.env.GEMINI_IMAGE_API_KEY || process.env.GOOGLE_GEMINI_IMAGE_API_KEY;
   if (!API_KEY) {
-    return res.status(500).json({ error: 'Missing GEMINI_IMAGE_API_KEY / GOOGLE_GEMINI_IMAGE_API_KEY in environment' });
+    return res.status(500).json({ error: 'Missing Gemini API key in env' });
   }
 
   try {
-    const prompt = `
-Create a stylized product photoshoot with the following details:
-- Concept: ${concept}
-- Color Palette: ${Array.isArray(palette) ? palette.join(', ') : palette}
-- Featured SKUs: ${Array.isArray(skus) ? skus.join(', ') : skus}
-Style: Parisian minimalist luxe, editorial, candlelight at 2700K, cohesive art direction.
-Output: one cohesive frame, at least 1024x1024.
-Avoid generic props; interpret listed SKUs for finishes/styling.
-    `.trim();
-
+    const model = "gemini-2.5-flash-image"; // image-capable model id
     const url =
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=' +
-      API_KEY;
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(API_KEY)}`;
 
-    const geminiResponse = await fetch(url, {
+    const safeCount = Math.max(1, Math.min(8, Number(count) || 1));
+
+    const prompt = `
+Create a stylized product photoshoot for a Maison GDC lookbook.
+Concept: ${concept}
+Color Palette: ${Array.isArray(palette) ? palette.join(', ') : palette}
+Featured SKUs: ${Array.isArray(skus) ? skus.join(', ') : skus}
+Style: Parisian minimalist luxe, cohesive editorial lighting at 2700K candlelight.
+Output: ${safeCount} cohesive frames suitable for a luxury deck; avoid generic props; interpret listed SKUs for finishes/styling.
+`.trim();
+
+    const body = { contents: [{ parts: [{ text: prompt }] }] };
+
+    const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        generationConfig: { response_mime_type: 'image/png' }, // <-- ensure we get an image
-        contents: [{ parts: [{ text: prompt }] }]
-      })
+      body: JSON.stringify(body)
     });
 
-    if (!geminiResponse.ok) {
-      const text = await geminiResponse.text();
-      return res.status(geminiResponse.status).json({
-        error: 'Gemini request failed',
-        details: text
-      });
+    if (!r.ok) {
+      const details = await r.text();
+      return res.status(r.status).json({ error: 'Gemini request failed', details });
     }
 
-    const data = await geminiResponse.json();
+    const data = await r.json();
 
-    // Extract first image part
-    const imagePart =
-      data?.candidates?.[0]?.content?.parts?.find(
-        (p) => p.inline_data?.data && /image\/(png|jpeg)/i.test(p.inline_data?.mime_type || '')
-      );
-
-    const base64Image = imagePart?.inline_data?.data;
-
-    if (!base64Image) {
-      return res.status(500).json({ error: 'No image returned from Gemini API', debug: data });
+    // Collect any returned images (inline_data)
+    const images = [];
+    for (const c of data.candidates || []) {
+      for (const p of c.content?.parts || []) {
+        if (p.inline_data?.data) {
+          images.push({
+            mime: p.inline_data.mime_type || 'image/png',
+            base64: p.inline_data.data
+          });
+        }
+      }
     }
 
+    if (images.length === 0) {
+      return res.status(500).json({ error: 'No image returned from Gemini', debug: data });
+    }
+
+    // Return first image as preview; keep all for future
     return res.status(200).json({
-      message: 'Lookbook image generated',
-      concept,
-      skus,
-      palette,
-      preview_image: `data:image/png;base64,${base64Image}`
+      message: 'Lookbook image(s) generated',
+      concept, skus, palette,
+      images: images.slice(0, safeCount).map((im) => ({
+        mime: im.mime,
+        data_url: `data:${im.mime};base64,${im.base64}`
+      }))
     });
-  } catch (error) {
-    return res.status(500).json({ error: 'Failed to generate image', details: String(error) });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to generate image', details: String(err) });
   }
 }
