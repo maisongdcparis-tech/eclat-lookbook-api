@@ -3,46 +3,68 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { concept, skus, palette } = req.body;
+  const { concept = "", skus = [], palette = [] } = req.body || {};
+
+  // Ensure an API key is present (works with either var name)
+  const API_KEY = process.env.GEMINI_IMAGE_API_KEY || process.env.GOOGLE_GEMINI_IMAGE_API_KEY;
+  if (!API_KEY) {
+    return res.status(500).json({ error: 'Missing GEMINI_IMAGE_API_KEY / GOOGLE_GEMINI_IMAGE_API_KEY in environment' });
+  }
 
   try {
     const prompt = `
-      Create a stylized product photoshoot with the following details:
-      - Concept: ${concept}
-      - Color Palette: ${palette.join(', ')}
-      - Featured SKUs: ${skus.join(', ')}
-      The scene should be artistic, editorial, and richly detailed.
-      Output should be a 1024x1024 stylized JPG or PNG image.
-    `;
+Create a stylized product photoshoot with the following details:
+- Concept: ${concept}
+- Color Palette: ${Array.isArray(palette) ? palette.join(', ') : palette}
+- Featured SKUs: ${Array.isArray(skus) ? skus.join(', ') : skus}
+Style: Parisian minimalist luxe, editorial, candlelight at 2700K, cohesive art direction.
+Output: one cohesive frame, at least 1024x1024.
+Avoid generic props; interpret listed SKUs for finishes/styling.
+    `.trim();
 
-    const geminiResponse = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=' + process.env.GEMINI_API_KEY,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }]
-        })
-      }
-    );
+    const url =
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=' +
+      API_KEY;
+
+    const geminiResponse = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        generationConfig: { response_mime_type: 'image/png' }, // <-- ensure we get an image
+        contents: [{ parts: [{ text: prompt }] }]
+      })
+    });
+
+    if (!geminiResponse.ok) {
+      const text = await geminiResponse.text();
+      return res.status(geminiResponse.status).json({
+        error: 'Gemini request failed',
+        details: text
+      });
+    }
 
     const data = await geminiResponse.json();
 
-    const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inline_data?.data);
+    // Extract first image part
+    const imagePart =
+      data?.candidates?.[0]?.content?.parts?.find(
+        (p) => p.inline_data?.data && /image\/(png|jpeg)/i.test(p.inline_data?.mime_type || '')
+      );
+
     const base64Image = imagePart?.inline_data?.data;
 
     if (!base64Image) {
       return res.status(500).json({ error: 'No image returned from Gemini API', debug: data });
     }
 
-    res.status(200).json({
-      message: "Lookbook generated successfully!",
+    return res.status(200).json({
+      message: 'Lookbook image generated',
       concept,
       skus,
       palette,
       preview_image: `data:image/png;base64,${base64Image}`
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to generate image', details: error.message });
+    return res.status(500).json({ error: 'Failed to generate image', details: String(error) });
   }
 }
